@@ -1,3 +1,4 @@
+import base64
 import socket
 from collections import OrderedDict
 
@@ -23,6 +24,7 @@ from dcim.models import (
     PowerPortTemplate, Rack, RackGroup, RackReservation, RackRole, RearPort, RearPortTemplate, Region, Site,
     VirtualChassis,
 )
+from secrets.models import Secret, SessionKey
 from extras.api.serializers import RenderedGraphSerializer
 from extras.api.views import CustomFieldModelViewSet
 from extras.models import Graph
@@ -442,6 +444,32 @@ class DeviceViewSet(CustomFieldModelViewSet):
         optional_args = settings.NAPALM_ARGS.copy()
         if device.platform.napalm_args is not None:
             optional_args.update(device.platform.napalm_args)
+
+        # Update NAPALM parameters according to the device secrets
+        session_key = None
+        if 'session_key' in request.COOKIES:
+            session_key = base64.b64decode(request.COOKIES['session_key'])
+        elif 'HTTP_X_SESSION_KEY' in request.META:
+            session_key = base64.b64decode(request.META['HTTP_X_SESSION_KEY'])
+            
+        if session_key is not None:
+            try:
+                sk = SessionKey.objects.get(userkey__user=request.user)
+                master_key = sk.get_master_key(session_key)
+            except (SessionKey.DoesNotExist, InvalidKey):
+                raise ValidationError("Invalid session key.")
+
+            for secret in Secret.objects.filter(device=device):
+                if secret.name[:9].lower() != 'x-napalm-':
+                    continue
+                secret.decrypt(master_key)
+                key = secret.name[9:]
+                if key.lower() == 'username':
+                    username = secret.plaintext
+                elif key.lower() == 'password':
+                    password = secret.plaintext
+                elif key:
+                    optional_args[key.lower()] = secret.plaintext
 
         # Update NAPALM parameters according to the request headers
         for header in request.headers:

@@ -470,6 +470,9 @@ class DeviceViewSet(CustomFieldModelViewSet):
                     password = secret.plaintext
                 elif key:
                     optional_args[key.lower()] = secret.plaintext
+        elif any(map(lambda x: x.name[:9].lower() == 'x-napalm-',Secret.objects.filter(device=device))):
+            raise ServiceUnavailable("Host has NAPALM Secrets but your Session Key is not activated")
+
 
         # Update NAPALM parameters according to the request headers
         for header in request.headers:
